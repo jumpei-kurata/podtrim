@@ -1,0 +1,8 @@
+{
+  "mode": "sameroom",
+  "expected": {
+    "T1.wav": 0,
+    "T2.wav": -1.234,
+    "T3.wav": -2.567
+  }
+}

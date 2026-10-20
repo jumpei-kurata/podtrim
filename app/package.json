@@ -1,0 +1,8 @@
+{
+  "name": "podtrim",
+  "productName": "Podtrim",
+  "version": "0.1.0",
+  "description": "ポッドキャストの3人の録音を、別々のまま編集して1本にするアプリ（Mac のアプリとして開く入れ物）",
+  "main": "main.js",
+  "private": true
+}

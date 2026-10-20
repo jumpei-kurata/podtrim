@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- Podtrim のアイコン: 3人のトラック（塊と波形）と再生位置の線。画面の色（紺の塊・水色の波形）とそろえる -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2a3a55"/>
+      <stop offset="1" stop-color="#121a28"/>
+    </linearGradient>
+    <linearGradient id="body" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#21466f"/>
+      <stop offset="1" stop-color="#173253"/>
+    </linearGradient>
+    <clipPath id="shape"><rect x="100" y="100" width="824" height="824" rx="185"/></clipPath>
+  </defs>
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#bg)"/>
+  <g clip-path="url(#shape)">
+    <!-- 1人目 -->
+    <rect x="168" y="250" width="360" height="148" rx="16" fill="url(#body)" stroke="#0a1626" stroke-width="4"/>
+    <rect x="168" y="250" width="360" height="30" rx="16" fill="#3a6da6"/>
+    <rect x="168" y="266" width="360" height="14" fill="#3a6da6"/>
+    <rect x="548" y="250" width="308" height="148" rx="16" fill="url(#body)" stroke="#0a1626" stroke-width="4"/>
+    <rect x="548" y="250" width="308" height="30" rx="16" fill="#3a6da6"/>
+    <rect x="548" y="266" width="308" height="14" fill="#3a6da6"/>
+    <g stroke="#86bbee" stroke-width="10" stroke-linecap="round">
+      <path d="M205 338v6M235 322v38M262 330v22M290 312v58M318 336v10M352 326v30M384 316v50M414 334v14M448 324v34M480 338v6"/>
+      <path d="M582 330v22M610 318v46M640 334v14M672 312v58M704 326v30M736 338v6M770 320v42M806 332v18"/>
+    </g>
+    <!-- 2人目 -->
+    <rect x="168" y="438" width="220" height="148" rx="16" fill="url(#body)" stroke="#0a1626" stroke-width="4"/>
+    <rect x="168" y="438" width="220" height="30" rx="16" fill="#3a6da6"/>
+    <rect x="168" y="454" width="220" height="14" fill="#3a6da6"/>
+    <rect x="408" y="438" width="448" height="148" rx="16" fill="url(#body)" stroke="#0a1626" stroke-width="4"/>
+    <rect x="408" y="438" width="448" height="30" rx="16" fill="#3a6da6"/>
+    <rect x="408" y="454" width="448" height="14" fill="#3a6da6"/>
+    <g stroke="#86bbee" stroke-width="10" stroke-linecap="round">
+      <path d="M204 520v12M234 504v44M266 514v24M298 498v56M330 516v20M360 524v4"/>
+      <path d="M444 522v8M474 506v40M506 496v60M538 512v28M570 500v52M602 518v16M636 506v40M668 520v12M700 502v48M734 514v24M766 524v4M800 508v36M830 520v12"/>
+    </g>
+    <!-- 3人目 -->
+    <rect x="168" y="626" width="452" height="148" rx="16" fill="url(#body)" stroke="#0a1626" stroke-width="4"/>
+    <rect x="168" y="626" width="452" height="30" rx="16" fill="#3a6da6"/>
+    <rect x="168" y="642" width="452" height="14" fill="#3a6da6"/>
+    <rect x="640" y="626" width="216" height="148" rx="16" fill="url(#body)" stroke="#0a1626" stroke-width="4"/>
+    <rect x="640" y="626" width="216" height="30" rx="16" fill="#3a6da6"/>
+    <rect x="640" y="642" width="216" height="14" fill="#3a6da6"/>
+    <g stroke="#86bbee" stroke-width="10" stroke-linecap="round">
+      <path d="M206 700v28M238 690v48M270 708v12M302 694v40M334 684v60M366 702v24M398 712v4M430 692v44M462 704v20M494 688v52M526 700v28M558 710v8M590 698v32"/>
+      <path d="M676 708v12M708 692v44M740 700v28M772 690v48M804 704v20M834 712v4"/>
+    </g>
+    <!-- 再生位置の線 -->
+    <rect x="603" y="214" width="10" height="596" rx="5" fill="#ffffff"/>
+    <path d="M582 196h52l-26 30z" fill="#ffffff"/>
+  </g>
+</svg>
