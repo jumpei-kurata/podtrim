@@ -323,7 +323,8 @@
   /* AI が確かめてほしいと言った所（説明文の列の中・本文の下の黄色い枠。1件ずつ出す。列の高さの半分まで。それより多い時だけ
      枠の中をスクロールする＝本文が潰れないように） */
   .dpNote { flex: none; max-height: 50%; overflow: auto; color: #e3c36a; font-size: 12px; line-height: 1.6; margin-top: 8px; padding: 6px 10px; border: 1px solid rgba(227, 195, 106, .55); border-radius: 8px; background: rgba(227, 195, 106, .08); user-select: text; word-break: auto-phrase; }
-  .dpNoteH { font-weight: 600; margin-bottom: 2px; }
+  .dpNoteH { font-weight: 600; cursor: pointer; user-select: none; } /* 押すと閉じる・開く（左の ▸ ▾） */
+  .dpNote[open] > .dpNoteH { margin-bottom: 2px; }
   .dpNote ul { margin: 0; padding-left: 18px; }
   .dpMsg { color: #b9c0c8; line-height: 1.7; }
   .dpErr { flex: none; color: #ff9b8a; font-size: 12px; line-height: 1.5; margin-bottom: 6px; }
@@ -3405,6 +3406,7 @@ $('#helpPanel').addEventListener('mousedown', e => { if (e.target === $('#helpPa
 // 使わない時は「AI に頼む文」（Claude などのチャットに貼る）と文字起こしまで。倉田さん「説明文と目次の下書きを自動で作る…2番って
 // なんなら今やれない？」「無料でできる、API 提供してる AI あるっしょ？…人それぞれ」「窓は…下開いてるから別に下でもよくね」（2026-10-18）
 let descTimer = null, descView = null, aiConf = null, dpMode = 'result'; // dpMode: 'result'（下書き）| 'ai'（AI の設定）
+let dpNotesOpen = true; // 「確かめてほしい所」を開いているか（欄を作り直しても保つ。回を開き直すと開く）
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const tsec = t => { const p = String(t).split(':').map(Number); return p.length === 3 ? p[0] * 3600 + p[1] * 60 + p[2] : p[0] * 60 + p[1]; };
 async function loadAiConf() { try { aiConf = await (await fetch('/api/ai')).json(); } catch (e) { aiConf = null; } }
@@ -3500,13 +3502,17 @@ function renderDesc() {
     // 説明文の中に。コピーされる本文とは枠で分ける）。経緯（2026-10-23）: 前は「コピー」のすぐ下・本文の上に「・」でつないだ1段落で、
     // 本文の一部に見え（倉田さん「確かめてほしい所もコピーされるように思っちゃう」）、3件目の途中で切れて見えていた → 一度3列の上に
     // 「（コピーには入りません）」付きで出したが、倉田さん「こんなのいらんだろ…普通の人が考えたら邪魔になる情報」「説明文の下書きに
-    // ついての注意点でしょ？だったら説明文のセクションの中にはやっぱりあった方がいい」。コピーは前から本文だけ
+    // ついての注意点でしょ？だったら説明文のセクションの中にはやっぱりあった方がいい」。コピーは前から本文だけ。
+    // 見出しを押すと閉じる・開く（同じ日・倉田さん「閉じたり開いたりをできるようにすると良いかも」）。閉じると本文が広く見える
     const notes = r.notes && r.notes.length
-      ? `<div class="dpNote"><div class="dpNoteH">確かめてほしい所</div><ul>${r.notes.map(n => `<li>${esc(n)}</li>`).join('')}</ul></div>` : '';
+      ? `<details class="dpNote"${dpNotesOpen ? ' open' : ''}><summary class="dpNoteH">確かめてほしい所（${r.notes.length}件）</summary><ul>${
+        r.notes.map(n => `<li>${esc(n)}</li>`).join('')}</ul></details>` : '';
     body.innerHTML = `${err}${done}${redo}<div class="dpCols">
       <div class="dpCol"><div class="dpH">タイトル案（1つ目がおすすめ）</div><div class="dpScroll">${r.titles.map((t, i) => `<div class="dpRow"><span>${esc(t)}</span><button data-copy="title:${i}">コピー</button></div>`).join('')}</div></div>
       <div class="dpCol"><div class="dpH"><span>説明文（目次と定型の下まで全部）</span><button data-copy="desc">コピー</button></div><div class="dpScroll dpText">${esc(r.description)}</div>${notes}</div>
       <div class="dpCol"><div class="dpH">目次（押すとその所を聞ける）</div><div class="dpScroll dpToc">${toc(r.toc)}</div></div></div>`;
+    const nd = body.querySelector('.dpNote');
+    if (nd) nd.ontoggle = () => { dpNotesOpen = nd.open; };
   } else {
     const lines = String(r.transcriptText || '').split('\n').map(l => { const m = /^\[(\d+:\d{2})\] (.*)$/.exec(l); return m ? { t: m[1], label: ` ${m[2]}` } : null; }).filter(Boolean);
     // 左の列は、作った時の理由ではなく今の設定で（作った後に AI を選んだら「作り直す」へ案内する）
