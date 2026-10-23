@@ -7,9 +7,10 @@
 //   node app/build.js --download-only … Electron の zip を用意するだけ（場所を出す）
 //
 // - Electron（ブラウザの部品ごと Mac のアプリにする仕組み）は、この Mac の取っておき（~/Library/Caches/electron の zip。
-//   前に他の道具が入れたもの）のいちばん新しい版を使う。ELECTRON_ZIP=<electron-vX.Y.Z-darwin-arm64.zip> で場所を渡してもよい。
-//   取っておきが無い Mac（かいちさん・のりさんの Mac など）では、Electron の公式の置き場（GitHub の Releases）から決まった版
-//   （ELECTRON_VERSION・既定は倉田さんの Mac で使っている版）を1回だけ落として取っておき、公式の SHASUMS256.txt と指紋（SHA-256）が
+//   前に他の道具が入れたもの）のいちばん新しい版を使う。ただし決まった版（ELECTRON_VERSION）より古い取っておきは使わない
+//   （2026-10-22。更新の止まった古い版で組み立てないように）。ELECTRON_ZIP=<electron-vX.Y.Z-darwin-arm64.zip> で場所を渡してもよい。
+//   使える取っておきが無い Mac（かいちさん・のりさんの Mac など）では、Electron の公式の置き場（GitHub の Releases）から決まった版
+//   （ELECTRON_VERSION）を1回だけ落として取っておき、公式の SHASUMS256.txt と指紋（SHA-256）が
 //   合うかを確かめてから使う（2026-10-19。前は取っておきが無いと止まった）。ブラウザでなく curl で落とすので、Mac の「インターネット
 //   から落とした物」の印が付かず、組み立てたアプリが Mac に止められない。ELECTRON_MIRROR で置き場を変えられる（試す時は file://）
 // - アプリは画面とサーバーを持たず、このリポジトリの ui/ をそのまま動かす（直したら作り直さなくてよい）。
@@ -37,7 +38,9 @@ function machineArch() {
 }
 const ARCH = process.env.ELECTRON_ARCH || machineArch();
 
-const ELECTRON_VERSION = process.env.ELECTRON_VERSION || '41.10.4'; // 倉田さんの Mac で使っている版（2026-10-19）
+// 2026-10-22 に 41.10.4 から上げた（41 系は更新が止まった）。中の Node は 24.22.0 で、2026-10-21 の Node のセキュリティの直し
+// （24.22.1）はまだ入っていない＝44 系の次の版待ち
+const ELECTRON_VERSION = process.env.ELECTRON_VERSION || '44.9.3';
 const MIRROR = (process.env.ELECTRON_MIRROR || 'https://github.com/electron/electron/releases/download/').replace(/\/?$/, '/');
 
 // 取っておきが無い時: 公式の置き場から落として、公式の指紋と合うかを確かめてから、取っておきの場所に置く
@@ -64,7 +67,7 @@ function downloadZip(cacheDir) {
   return file;
 }
 
-// いちばん新しい Electron の zip（この Mac の形〈arm64 / x64〉のもの）。無ければ公式から落とす
+// いちばん新しい Electron の zip（この Mac の形〈arm64 / x64〉のもの）。決まった版より古いものしか無ければ公式から落とす
 function findZip() {
   if (process.env.ELECTRON_ZIP) return process.env.ELECTRON_ZIP;
   const dir = process.env.ELECTRON_CACHE_DIR || path.join(os.homedir(), 'Library', 'Caches', 'electron');
@@ -77,8 +80,9 @@ function findZip() {
       if (m && m[4] === ARCH) zips.push({ file: path.join(sub, f), v: m.slice(1, 4).map(Number) });
     }
   }
-  zips.sort((a, b) => b.v[0] - a.v[0] || b.v[1] - a.v[1] || b.v[2] - a.v[2]);
-  return zips.length ? zips[0].file : downloadZip(dir);
+  const cmp = (a, b) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2];
+  zips.sort((a, b) => cmp(b.v, a.v));
+  return zips.length && cmp(zips[0].v, ELECTRON_VERSION.split('.').map(Number)) >= 0 ? zips[0].file : downloadZip(dir);
 }
 
 function build() {
