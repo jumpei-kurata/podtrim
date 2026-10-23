@@ -25,6 +25,11 @@
 //   GET  /api/projects/<id>/describe       … 説明文づくりの進み具合と、前に作った物（description.json）・今の書き出しの日時
 //   POST /api/projects/<id>/describe       … 説明文づくりを始める（{ again } で文字起こしからやり直す。ui/describe.js）
 //   POST /api/projects/<id>/describe/cancel … 説明文づくりをやめる
+//   GET  /api/projects/<id>/align          … 頭を揃える窓（頭揃えが自動で決まらなかった回）: 録音ごとの冒頭の波形・手拍子の候補・
+//                                            今の手拍子の時刻
+//   GET  /api/projects/<id>/align/preview?claps=<秒,…> … 選んだ手拍子の前後を全員分重ねた音（WAV）。揃っていればパンが1回に聞こえる
+//   POST /api/projects/<id>/align          … 選んだ手拍子で揃え直し、切る所と被りを探し直す（{ claps: [秒,…] }。ui/import.js を
+//                                            もう一度走らせる。進み具合は /api/imports/<id>）
 //   GET  /api/import/options               … 新しい回を作る時の BGM と CM の選択肢（前の回で使ったもの・CM のフォルダ）と、
 //                                            間の詰め方の初めの値（いちばん最近触った回の値）
 //   POST /api/files/resolve                … 画面に落とされたファイルの元の場所を探す（{ files: [{ name, size, lastModified }] }）
@@ -43,6 +48,7 @@ const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
 const DATA = require('./data-dir');
+const clap = require('../src/clap');
 const { targetPath, FORMATS, exportDir, isOwnExport, overwriteCheck, safeFileName } = require('./export');
 const { isAudio, findOriginals, isAllowedPath, safeName, UPLOADS } = require('./files');
 const { readSettings, writeSettings, AI, isAI, aiChoice, hasKey, setKey, deleteKey } = require('./settings');
@@ -470,6 +476,56 @@ function folderSize(dir) {
   } catch { /* 消えた */ }
   return sum;
 }
+// ---------- 頭を揃える窓（頭揃えが自動で決まらなかった回・2026-10-23） ----------
+// 録音ごとに、冒頭 clap.WINDOW 秒の波形（1ms ごとの山・0〜255 を base64）と手拍子の候補（src/clap.js。大きい音の上位と拍手らしい
+// 形の音）、今の手拍子の時刻を返す。今の手拍子は、手で選んだ物 → 自動で揃った録音は基準の手拍子からずれを引いた時刻 → 揃わなかった
+// 録音は拍手らしい音の1位（無ければ一番大きい音。guess: true＝確かめてほしい）。生の録音を読むので数秒かかるため、取っておく
+const ALIGN_PPS = 1000;
+function alignView(dir, project) {
+  const cache = path.join(dir, 'work', 'align-view.json');
+  const sync = readJson(path.join(dir, 'work', 'sync.json'));
+  const hit = readJson(cache);
+  if (hit && sync && hit.syncAt === fs.statSync(path.join(dir, 'work', 'sync.json')).mtimeMs) return hit;
+  if (!sync) throw new Error('この回には頭揃えの記録がありません（新しい回を作り直してください）');
+  const ref = sync.results[0];
+  const tracks = project.tracks.map((t, i) => {
+    const file = t.source && t.source.file;
+    if (!file || !fs.existsSync(file)) throw new Error(`録音が見つかりません: ${file || t.name}`);
+    const x = clap.pcm(file, clap.WINDOW, clap.CLAP_RATE);
+    const per = clap.CLAP_RATE / ALIGN_PPS;
+    const wave = Buffer.alloc(Math.floor(x.length / per));
+    let max = 1e-9;
+    for (const v of x) if (Math.abs(v) > max) max = Math.abs(v);
+    for (let b = 0; b < wave.length; b++) {
+      let p = 0;
+      for (let k = b * per; k < (b + 1) * per; k++) { const v = Math.abs(x[k]); if (v > p) p = v; }
+      wave[b] = Math.round((p / max) * 255);
+    }
+    const c = clap.clapCandidates(clap.clapPcm(file));
+    const top = c.top[0] ? c.top[0].peak : 1;
+    const candidates = [];
+    for (const s of [...c.clapLike, ...c.top]) {
+      if (candidates.some(o => Math.abs(o.t - s.t) < 0.3)) continue;
+      candidates.push({ t: +s.t.toFixed(3), size: +(s.peak / top).toFixed(2), clapLike: !!s.clapLike });
+    }
+    candidates.sort((a, b) => a.t - b.t);
+    const r = sync.results[i] || {};
+    const pending = (project.alignPending || []).includes(i);
+    const sure = clap.syncClap(c);
+    let clapAt = Number.isFinite(r.manualClapAt) ? r.manualClapAt
+      : i === 0 ? ref.clapAt
+        : !pending && Number.isFinite(r.offsetSeconds) && Number.isFinite(ref.clapAt) ? +(ref.clapAt - r.offsetSeconds).toFixed(3) : null;
+    const guess = !Number.isFinite(clapAt) || (i === 0 && !ref.syncClap);
+    if (!Number.isFinite(clapAt)) clapAt = sure ? sure.t : c.clapLike[0] ? c.clapLike[0].t : c.top[0] ? c.top[0].t : 0;
+    return { name: t.name, pending, clapAt: +clapAt.toFixed(3), guess: guess && !sure, candidates, wave: wave.toString('base64') };
+  });
+  const view = { pps: ALIGN_PPS, window: clap.WINDOW, syncAt: fs.statSync(path.join(dir, 'work', 'sync.json')).mtimeMs, tracks };
+  try { writeJson(cache, view); } catch { /* 取っておけなくても、次にまた作るだけ */ }
+  return view;
+}
+// 手拍子の時刻の並び（録音の数だけ・冒頭 clap.WINDOW 秒の中）か
+const validClaps = (claps, n) => Array.isArray(claps) && claps.length === n && claps.every(v => Number.isFinite(v) && v >= 0 && v <= clap.WINDOW);
+
 // その回で今動いている仕事（動いている間は消さない）
 function busyWith(id) {
   for (const [kind, label] of [['export', '書き出し'], ['describe', '説明文づくり'], ['import', '回づくり']]) {
@@ -584,6 +640,8 @@ function projectsApi(req, res, parts, query) {
         folder: exportFolderView(), last: last && { ...last, display: shortPath(last.out) } });
     }
     if (parts.length === 4 && req.method === 'POST') {
+      // 頭揃え待ちの回は、ずれたまま書き出さない
+      if (project.alignPending) return sendJson(res, 409, { error: '頭揃え待ちの回です。上の「頭を揃える」で揃えてから書き出してください' });
       return readJsonBody(req, res, body => {
         const format = FORMATS[body.format] ? body.format : 'wav';
         const name = typeof body.name === 'string' ? safeFileName(body.name) : null;
@@ -601,6 +659,46 @@ function projectsApi(req, res, parts, query) {
       if (!out || !fs.existsSync(out)) return sendJson(res, 404, { error: '書き出したファイルが見つかりません' });
       spawn('open', ['-R', out], { stdio: 'ignore' }).on('error', () => {});
       return sendJson(res, 200, { ok: true });
+    }
+  }
+  // 頭を揃える窓（頭揃えが自動で決まらなかった回）
+  if (parts[3] === 'align') {
+    if (parts.length === 4 && req.method === 'GET') {
+      try { return sendJson(res, 200, alignView(dir, project)); } catch (e) { return sendJson(res, 400, { error: e.message }); }
+    }
+    // 選んだ手拍子の 2.5秒前から 4秒を、全員分重ねる（割らずに重ねる。揃っていれば「よーおっ、パン」が1回に聞こえる）
+    if (parts.length === 5 && parts[4] === 'preview' && req.method === 'GET') {
+      const claps = String((query && query.get('claps')) || '').split(',').map(Number);
+      if (!validClaps(claps, project.tracks.length)) return sendJson(res, 400, { error: '手拍子の時刻が正しくありません' });
+      if (project.tracks.some(t => !t.source || !t.source.file)) return sendJson(res, 400, { error: 'この回には録音の場所の記録がありません' });
+      const inputs = project.tracks.flatMap((t, i) => ['-ss', String(Math.max(0, claps[i] - 2.5)), '-t', '4', '-i', t.source.file]);
+      // 手拍子が 2.5秒より前にある録音は、足りない分だけ頭に無音を足して、全員の手拍子を同じ時刻にそろえる
+      const pads = claps.map((c, i) => `[${i}:a]aformat=channel_layouts=mono,adelay=${Math.round(Math.max(0, 2.5 - c) * 1000)}:all=1[p${i}]`);
+      const mix = `${pads.join(';')};${claps.map((_, i) => `[p${i}]`).join('')}amix=inputs=${claps.length}:normalize=0,alimiter=limit=0.9[out]`;
+      const ff = spawn('ffmpeg', ['-hide_banner', '-loglevel', 'error', ...inputs, '-filter_complex', mix, '-map', '[out]', '-ar', '44100', '-f', 'wav', '-'],
+        { stdio: ['ignore', 'pipe', 'ignore'] });
+      const out = [];
+      ff.stdout.on('data', d => out.push(d));
+      ff.on('error', () => sendJson(res, 500, { error: '重ねた音を作れませんでした' }));
+      ff.on('close', code => {
+        if (code !== 0) return sendJson(res, 500, { error: '重ねた音を作れませんでした' });
+        const buf = Buffer.concat(out);
+        res.writeHead(200, { 'Content-Type': TYPES['.wav'], 'Content-Length': buf.length, 'Cache-Control': 'no-store' });
+        res.end(buf);
+      });
+      return;
+    }
+    // 選んだ手拍子を import.json に残し、回づくり（ui/import.js）をもう一度走らせる
+    if (parts.length === 4 && req.method === 'POST') {
+      return readJsonBody(req, res, body => {
+        const busy = busyWith(id);
+        if (busy) return sendJson(res, 409, { error: `今、この回の${busy}をしています。終わってから揃えてください` });
+        if (!validClaps(body.claps, project.tracks.length)) return sendJson(res, 400, { error: '手拍子の時刻が正しくありません' });
+        const imp = readJson(path.join(dir, 'import.json'));
+        if (!imp) return sendJson(res, 400, { error: 'この回は画面で作った回ではないので、ここでは揃え直せません' });
+        writeJson(path.join(dir, 'import.json'), { ...imp, claps: body.claps.map(v => +v.toFixed(4)), alignedAt: new Date().toISOString() });
+        sendJson(res, 202, { id, ...jobView(startJob(`import:${id}`, 'import.js', [id])) });
+      });
     }
   }
   // 説明文と目次の下書き（ui/describe.js を別の動きで走らせる）。last は前に作った物（開き直しても出せるように）。

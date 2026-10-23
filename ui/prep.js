@@ -1,10 +1,12 @@
 #!/usr/bin/env node
 // 編集アプリの「回」（プロジェクト）を作る。自動編集の結果（cuts.json）から、画面で使うデータを用意する。
 //
-//   node ui/prep.js <cuts.json> <回のID> [表示名] [--sync <sync.json>] [--bgm <BGMの音源>] [--cm <CMの音源>]
+//   node ui/prep.js <cuts.json> <回のID> [表示名] [--sync <sync.json>] [--bgm <BGMの音源>] [--cm <CMの音源>] [--pending <番号,…>]
 //
 // --sync を渡すと、生の録音の場所と頭揃えのずれを回に記録する（書き出しの時に頭揃えをやり直せるように。
 // cuts.json が指す頭揃え済みの音源は一時フォルダにあることが多く、後で消えうる）。
+// --pending は、頭揃えが自動で決まらなかった録音の番号（ui/import.js）。回に alignPending として残し、画面が「頭を揃える」窓を開く。
+// 揃っていない間は、手拍子より前を切らず、被りも探さない（揃えた後に ui/import.js が作り直す）。
 //
 // 作るもの（<回のデータの置き場所>/<回のID>/。置き場所は ui/data-dir.js）:
 //  - voices.wav   … 声のトラックを1つのファイルの別々のチャンネルに入れた再生用（16kHz）。
@@ -36,9 +38,10 @@ for (let i = 2; i < process.argv.length; i++) {
 }
 const [planPath, id, displayName] = positional;
 if (!planPath || !id || !/^[\w.-]+$/.test(id)) {
-  console.error('usage: node ui/prep.js <cuts.json> <回のID（英数字・-_.）> [表示名] [--sync <sync.json>] [--bgm <BGM>] [--cm <CM>]');
+  console.error('usage: node ui/prep.js <cuts.json> <回のID（英数字・-_.）> [表示名] [--sync <sync.json>] [--bgm <BGM>] [--cm <CM>] [--pending <番号,…>]');
   process.exit(1);
 }
+const pending = opts.pending ? opts.pending.split(',').map(Number).filter(Number.isInteger) : [];
 
 const plan = JSON.parse(fs.readFileSync(planPath, 'utf8'));
 const outDir = path.join(DATA, id);
@@ -59,7 +62,7 @@ if (opts.sync) {
 // clapAt は「高い音が一番大きい所」で、話の途中のこともあるため）。手拍子の後 CLAP_TAIL 秒（余韻）まで切る
 const CLAP_TAIL = 0.3;
 let headCut = 0;
-if (sync) {
+if (sync && !pending.length) {
   const ref = sync.results[0];
   const clear = sync.results.slice(1).some(r => r.clapClear);
   if (ref && ref.syncClap && clear && Number.isFinite(ref.clapAt)) headCut = Math.min(plan.total, +(ref.clapAt + CLAP_TAIL).toFixed(3));
@@ -142,7 +145,9 @@ function preview(src, out, maxSec) {
 // src/overlap.js の結果を、トラックの番号で引けるように直して持つ
 // 被りの検出に失敗しても、回は作る（印が出ないだけで編集はできる）
 let overlaps = [];
-{
+if (pending.length) {
+  console.error('  頭揃え待ちなので、被りはまだ探しません（揃えた後に探します）');
+} else {
   // 今動いている Node で動かす（Mac のアプリから動かした時は、ターミナルの node が無いため）
   const r = spawnSync(process.execPath, [path.join(__dirname, '..', 'src', 'overlap.js'), ...plan.files],
     { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
@@ -198,6 +203,7 @@ const project = {
   bgm,
   cm,
   loudness: -16,
+  ...(pending.length ? { alignPending: pending } : {}),
 };
 // 作り直す時、前の編集の状態は消さずに退避する（カットや人数が変わると、そのままでは合わない）。
 // 作り終えてから退避するので、途中で失敗しても前の回と編集の状態はそのまま残る

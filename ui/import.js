@@ -7,9 +7,12 @@
 // （画面に録音を落とすと、サーバーが書いてからこれを走らせる）。
 // 中でやることは、これまで手で打っていたコマンドと同じ（src/sync.js → src/align.js → src/analyze.js → ui/prep.js）。
 // 頭揃え済みの音源（1本 400〜650MB）は、終わったら消す。書き出しは生の録音から頭を揃え直すので要らない。
-// 頭揃えが自動で決まらなかった時は、止まって知らせる（冒頭の手拍子がはっきり録れていない等。人が候補から選ぶ）。
+// 頭揃えが自動で決まらなかった時は、止めずに「頭揃え待ち」の回として読み込む（決まらなかった録音はずらさずに置き、黙っている所と
+// 被りはまだ探さない）。画面の「頭を揃える」窓で人が手拍子の位置を選ぶと、import.json に claps（録音ごとの手拍子の時刻）が入って
+// もう一度これが走り、その揃え方で頭揃え → 黙っている所 → 画面の用意（被りの印）をやり直す（倉田さんの考えた流れ・2026-10-23。
+// 前は止まって知らせるだけで、収録したその日に編集を始められなかった）。
 
-const { spawn } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const DATA = require('./data-dir');
@@ -43,45 +46,80 @@ function runNode(script, args, each, env = {}) {
   });
 }
 
+// 録音の長さ（秒）
+function duration(file) {
+  const r = spawnSync('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', file], { encoding: 'utf8' });
+  const d = Number(r.stdout.trim());
+  if (r.status !== 0 || !Number.isFinite(d)) throw new Error(`録音の長さを測れませんでした: ${file}`);
+  return d;
+}
+
+// 手で選んだ手拍子の時刻（録音ごとの元の時刻。1つ目が基準）で、頭揃えの結果を書き換える。基準の手拍子が clapAt になるので、
+// 自動で揃った時と同じく、回を作る時に手拍子より前を切る（ui/prep.js）
+function applyClaps(sync, claps) {
+  sync.results.forEach((r, i) => {
+    r.manualClapAt = claps[i];
+    if (i === 0) { Object.assign(r, { clapAt: claps[0], syncClap: true, manual: true }); return; }
+    Object.assign(r, {
+      offsetSeconds: +(claps[0] - claps[i]).toFixed(4), accepted: true, clapClear: true, manual: true,
+      recordingType: null, basis: '手で選んだ手拍子', note: '手で選んだ手拍子で揃えました。',
+    });
+  });
+}
+
 async function importProject(id, progress = () => {}) {
   const dir = path.join(DATA, id);
   const job = JSON.parse(fs.readFileSync(path.join(dir, 'import.json'), 'utf8'));
   const work = path.join(dir, 'work');
   fs.mkdirSync(work, { recursive: true });
   const files = job.files;
+  const syncPath = path.join(work, 'sync.json');
 
-  // 1) 頭揃えのずれを探す（冒頭の手拍子と会話の譲り合い）
+  // 1) 頭揃えのずれを探す（冒頭の手拍子と会話の譲り合い）。手で揃えた後は、選んだ手拍子の時刻から決める
   progress('sync', 0);
-  const syncOut = await runNode('src/sync.js', files);
-  fs.writeFileSync(path.join(work, 'sync.json'), syncOut);
-  const sync = JSON.parse(syncOut);
-  const bad = sync.results.filter(r => r.role !== '基準' && (r.offsetSeconds === null || r.offsetSeconds === undefined));
-  if (bad.length) {
-    throw new Error(`頭揃えが自動で決まりませんでした（${bad.map(b => b.file).join('・')}）。` +
-      '冒頭の手拍子がはっきり録れていない可能性があります。手拍子をはっきりさせて録り直すか、倉田さんに相談してください');
+  let sync;
+  if (Array.isArray(job.claps)) {
+    sync = JSON.parse(fs.readFileSync(syncPath, 'utf8'));
+    applyClaps(sync, job.claps);
+    fs.writeFileSync(syncPath, JSON.stringify(sync, null, 2));
+  } else {
+    const syncOut = await runNode('src/sync.js', files);
+    fs.writeFileSync(syncPath, syncOut);
+    sync = JSON.parse(syncOut);
+  }
+  // 自動で揃わなかった録音（番号）。いったんずらさずに読み込み、画面で手で揃えてもらう
+  const pending = sync.results.map((r, i) => (r.role !== '基準' && (r.offsetSeconds === null || r.offsetSeconds === undefined) ? i : -1)).filter(i => i >= 0);
+  let alignPlan = syncPath;
+  if (pending.length) {
+    alignPlan = path.join(work, 'sync-pending.json');
+    fs.writeFileSync(alignPlan, JSON.stringify({ ...sync, results: sync.results.map((r, i) => (pending.includes(i) ? { ...r, offsetSeconds: 0 } : r)) }, null, 2));
   }
 
   // 2) 頭を揃える（一時的に、揃えた音源を作る）
   progress('align', 0);
-  await runNode('src/align.js', [path.join(work, 'sync.json'), path.join(work, 'aligned')]);
+  await runNode('src/align.js', [alignPlan, path.join(work, 'aligned')]);
   const aligned = files.map(f => path.join(work, 'aligned', `${path.basename(f, path.extname(f))}_sync.wav`));
 
   // 3) 全員が黙っている所（自動で切る所）を探す。間の詰め方（新しい回の窓のつまみ＝X 秒以上の間を g 秒に）を、自動編集の決まりに
   //    直して渡す: 切る所の前後に g の半分ずつ残し（PAD）、切る長さが X − g 以上の所だけ切る（MIN_CUT）。残す間は、画面の「調整」と
-  //    同じく詰める間の半分まで。決めていない時（前の import.json）は自動編集の既定のまま
+  //    同じく詰める間の半分まで。決めていない時（前の import.json）は自動編集の既定のまま。
+  //    頭揃え待ちの時は探さない（揃っていないと「全員が黙っている所」がずれる）。長さだけ測って、切る所の無い回にする
   progress('analyze', 0);
   let rule = {};
   if (Number.isFinite(job.tight) && Number.isFinite(job.gap)) {
     const g = Math.min(job.gap, job.tight / 2);
     rule = { PAD: String(+(g / 2).toFixed(3)), MIN_CUT: String(+(job.tight - g).toFixed(3)) };
   }
-  fs.writeFileSync(path.join(work, 'cuts.json'), await runNode('src/analyze.js', aligned, null, rule));
+  fs.writeFileSync(path.join(work, 'cuts.json'), pending.length
+    ? JSON.stringify({ files: aligned, total: Math.min(...aligned.map(duration)), cuts: [] }, null, 2)
+    : await runNode('src/analyze.js', aligned, null, rule));
 
   // 4) 画面の用意（再生用の音・波形・被り・声の大きさ・BGM と CM の試聴用）
   progress('prep', 0);
-  const args = [path.join(work, 'cuts.json'), id, job.name, '--sync', path.join(work, 'sync.json')];
+  const args = [path.join(work, 'cuts.json'), id, job.name, '--sync', syncPath];
   if (job.bgm) args.push('--bgm', job.bgm);
   if (job.cm) args.push('--cm', job.cm);
+  if (pending.length) args.push('--pending', pending.join(','));
   let lines = 0;
   const expect = files.length + 4; // prep.js が知らせる行の数の目安（声・波形×人数・被り・BGM・CM・声の大きさ）
   await runNode('ui/prep.js', args, () => progress('prep', Math.min(0.95, ++lines / expect)));
@@ -89,7 +127,7 @@ async function importProject(id, progress = () => {}) {
   fs.rmSync(path.join(work, 'aligned'), { recursive: true, force: true });
   const P = JSON.parse(fs.readFileSync(path.join(dir, 'project.json'), 'utf8'));
   progress('prep', 1);
-  return { id, name: P.name, duration: P.duration, tracks: P.tracks.length, cuts: P.cuts.length };
+  return { id, name: P.name, duration: P.duration, tracks: P.tracks.length, cuts: P.cuts.length, alignPending: pending.length ? pending : null };
 }
 
 module.exports = { importProject };

@@ -10,7 +10,7 @@ I co-host *Himajin Programmer*, a Japanese tech podcast with 500+ episodes, and 
 
 - **One key to cut across all tracks.** In GarageBand I selected three regions, deleted them, then dragged the rest left to close the gap. In Podtrim, `⌘⌫` does it.
 - **Automatic silence trimming** on all tracks at once. The default was tuned against my own hand edits and removes 76% of what I cut by hand.
-- **Automatic sync** from the clap at the start of the recording.
+- **Automatic sync** from the clap at the start of the recording, with a waveform view to pick the clap by hand when it can't be found automatically.
 - **Review mode** plays every cut and overlap in order.
 - **Playback at up to 2x speed**, with the pitch preserved.
 - **Show notes**: on-device transcription, then AI-drafted titles, a description, and chapters.

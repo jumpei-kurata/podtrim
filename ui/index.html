@@ -432,6 +432,24 @@
   .box.tidy { width: min(600px, calc(100vw - 32px)); word-break: auto-phrase; }
   .box.tidy > ul { margin: 0 0 10px; font-size: 13px; }
   .box.tidy > ul li + li { margin-top: 2px; }
+  /* 頭を揃える窓（頭揃えが自動で決まらなかった回）。録音ごとに冒頭の波形と手拍子の候補、下に手拍子の前後の拡大 */
+  .box.align { width: min(980px, calc(100vw - 32px)); word-break: auto-phrase; }
+  .alRow { margin: 10px 0 12px; }
+  .alHead { display: flex; align-items: baseline; gap: 8px; font-size: 13px; }
+  .alHead .st { font-size: 11px; padding: 1px 6px; border-radius: 4px; background: #3a3d44; color: var(--dim); }
+  .alHead .st.pend { background: #6b4a12; color: #ffd27a; }
+  .alHead .at { margin-left: auto; color: var(--dim); font-variant-numeric: tabular-nums; }
+  .alHead .at.guess { color: #ffd27a; }
+  .alWave, #alZoom { display: block; width: 100%; background: #1a1b1e; border-radius: 6px; cursor: crosshair; }
+  .alWave { margin-top: 4px; }
+  #alZoom { margin-top: 4px; }
+  .alCands { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+  .alCands button { height: 22px; padding: 0 6px; font-size: 12px; font-variant-numeric: tabular-nums; }
+  .alCands button.cur { background: var(--accent); border-color: var(--accent); color: #fff; }
+  #alStep, #alResult { white-space: pre-line; }
+  /* 上の帯の「頭を揃える」（頭揃え待ちの回だけ出す。目立つ色） */
+  button.warn { background: #6b4a12; border-color: #a8741c; color: #ffd27a; }
+  button.warn:hover { background: #7d5716; }
   .tidyList { border: 1px solid #3a3d44; border-radius: 8px; max-height: min(46vh, 420px); overflow: auto; }
   .tidyList label { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 2px 10px; align-items: center; padding: 8px 12px; cursor: pointer; }
   .tidyList label + label { border-top: 1px solid #34373d; }
@@ -514,6 +532,7 @@
       </div>
       <button id="rvJumpNext" class="icon" disabled title="次の確認箇所へ（→）。少し前に移る（何秒前かは確認のバーと「調整」で変えられる）"></button>
     </div>
+    <button id="alignBtn" class="warn" hidden title="頭揃えが自動で決まらなかった録音があります。手拍子の波形を見て頭を揃え、切る所と被りを探し直します">頭を揃える</button>
     <button id="descBtn" disabled title="説明文と目次の下書き（書き出したファイルを文字にして、AI がタイトル案・説明文・目次を書く。トラックの下に出る）">説明文</button>
     <button id="exportBtn" class="primary" disabled title="BGM と CM を入れた1本にする（ART19 に上げる用）">書き出す</button>
   </div>
@@ -809,6 +828,26 @@
       <button id="imStart" class="primary">作る</button>
       <button id="imCancel" hidden>やめる</button>
       <button id="imClose">閉じる</button>
+    </div>
+  </div>
+</div>
+<!-- 頭を揃える窓（頭揃えが自動で決まらなかった回・2026-10-23・倉田さんの考えた流れ: いったん全員分を読み込む → 画面で手拍子の波形を
+     見て手で頭を揃える → そこから切る所と被りを探し直す）。録音ごとに冒頭の波形と手拍子の候補を出し、手拍子を選ぶ。下の拡大で、
+     全員のパンが真ん中の線にそろえば揃っている -->
+<div id="alignPanel" class="modal" hidden>
+  <div class="box align">
+    <h2>頭を揃える</h2>
+    <div class="pex" id="alNote"></div>
+    <div id="alRows"></div>
+    <div class="phead"><span>手拍子の前後 1秒（全員分を、選んだ手拍子でそろえた物）</span></div>
+    <div class="pex">真ん中の赤い線に全員のパンがそろえば揃っています。押すと、押した所の近くの一番大きい山に合わせ直します</div>
+    <canvas id="alZoom"></canvas>
+    <div id="alProgress" hidden><span class="prog big"><i id="alBar"></i></span><span id="alStep"></span></div>
+    <div id="alResult"></div>
+    <div class="row">
+      <button id="alListen" title="選んだ手拍子の前後を全員分重ねて鳴らす（揃っていれば「パン」が1回に聞こえる）">重ねて聞く</button>
+      <button id="alStart" class="primary" title="この揃え方で頭を揃え直し、切る所（全員が黙っている所）と被りの印を探し直す">この揃え方で切る所と被りを探す</button>
+      <button id="alClose">閉じる</button>
     </div>
   </div>
 </div>
@@ -1387,6 +1426,13 @@ async function load(id) {
   // BGM・CM を入れ替えた時は開き直すので、その知らせはここで出す
   try { const after = sessionStorage.getItem('toastAfterLoad'); if (after) { notes.push(after); sessionStorage.removeItem('toastAfterLoad'); } } catch (e) {}
   if (notes.length) { const msg = notes.join('。'); toast(msg, Math.max(5000, msg.length * 100)); } // 長い知らせは読み終わるまで出す
+  // 頭揃え待ちの回（自動で頭が揃わなかった録音がある）: 書き出しと説明文は揃えてから。「頭を揃える」窓をすぐ開く
+  $('#alignBtn').hidden = !P.alignPending;
+  if (P.alignPending) {
+    $('#exportBtn').disabled = $('#descBtn').disabled = true;
+    $('#exportBtn').title = $('#descBtn').title = '頭揃え待ちの回です。先に「頭を揃える」で揃えてください';
+    openAlign();
+  }
   // ?t=秒（元の音の時間）で、その時刻のまわりを開く（「ここを聞いて」とリンクで渡すため）。
   // &span=秒 で見える幅（既定30秒）、&mode=raw で「元の音」の並びで開く
   const q = new URLSearchParams(location.search);
@@ -2895,6 +2941,208 @@ $('#imStart').onclick = startImport;
 $('#imClose').onclick = closeImport;
 $('#imCancel').onclick = () => { if (importId) postJson(`/api/imports/${encodeURIComponent(importId)}/cancel`).then(() => pollImport()); };
 $('#importPanel').addEventListener('mousedown', e => { if (e.target === $('#importPanel')) closeImport(); });
+
+// ----- 頭を揃える（頭揃えが自動で決まらなかった回・2026-10-23） -----
+// 倉田さんの考えた流れ: いったん全員分を読み込む → 画面で手拍子の波形を見て手で頭を揃える → そこから切る所と被りを探し直す。
+// 録音ごとに冒頭（90秒）の波形と手拍子の候補（★＝拍手らしい形の音）を出し、手拍子（「よーおっ」の後のパン）を選ぶ。波形を押すと、
+// 押した所の近くの候補（無ければ一番大きい山）に合わせる。下の拡大は、選んだ手拍子の前後1秒を全員分そろえて並べた物で、真ん中の線に
+// 全員のパンがそろえば揃っている（拡大を押すと、押した所の近くの一番大きい山に合わせ直す）。「重ねて聞く」で耳でも確かめられる。
+// 「この揃え方で…」で、サーバーが頭揃え → 全員が黙っている所 → 画面の用意（被りの印）をやり直し、回を開き直す（ui/import.js）
+let alView = null, alClaps = [], alWaves = [], alAudio = null, alPoll = null;
+const AL_ZOOM = 1; // 拡大の前後の秒数
+const AL_ROW_H = 56, AL_ZOOM_H = 64;
+
+async function openAlign() {
+  if (!P) return;
+  if (playing) togglePlay();
+  $('#alignPanel').hidden = false;
+  $('#alRows').innerHTML = '';
+  $('#alNote').textContent = '録音の冒頭を読んでいます…';
+  $('#alStart').disabled = $('#alListen').disabled = true;
+  showAlign({ state: 'none' });
+  try {
+    const r = await fetch(`/api/projects/${encodeURIComponent(P.id)}/align`);
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || '読めませんでした');
+    alView = j;
+  } catch (e) { $('#alNote').textContent = `読めませんでした: ${e.message}`; return; }
+  alClaps = alView.tracks.map(t => t.clapAt);
+  alWaves = alView.tracks.map(t => Uint8Array.from(atob(t.wave), ch => ch.charCodeAt(0)));
+  const pend = alView.tracks.filter(t => t.pending).map(t => t.name);
+  $('#alNote').textContent = (pend.length ? `自動で頭が揃わなかった録音があります（${pend.join('・')}）。` : '')
+    + '録音ごとに、音合わせの手拍子（「よーおっ」の後のパン）を選んでください。★は拍手らしい形の音です。波形を押すと、その近くの音に合わせます';
+  buildAlignRows();
+  drawAlign();
+  $('#alStart').disabled = $('#alListen').disabled = false;
+}
+function closeAlign() {
+  if (alAudio) alAudio.pause();
+  $('#alignPanel').hidden = true;
+}
+
+function buildAlignRows() {
+  const box = $('#alRows');
+  box.innerHTML = '';
+  alView.tracks.forEach((t, i) => {
+    const row = document.createElement('div');
+    row.className = 'alRow';
+    row.innerHTML = `<div class="alHead"><b></b><span class="st${t.pending ? ' pend' : ''}">${t.pending ? '自動で揃わなかった' : i === 0 ? '基準' : '自動で揃った'}</span><span class="at"></span></div>`
+      + '<canvas class="alWave"></canvas><div class="alCands"></div>';
+    row.querySelector('b').textContent = names[i] || t.name;
+    const cands = row.querySelector('.alCands');
+    for (const c of t.candidates) {
+      const b = document.createElement('button');
+      b.textContent = `${c.clapLike ? '★ ' : ''}${c.t.toFixed(2)}秒`;
+      b.title = `${c.clapLike ? '拍手らしい形の音（直前が静かで、余韻が短い）' : '大きい音'}・一番大きい音の ${Math.round(c.size * 100)}%`;
+      b.dataset.t = c.t;
+      b.onclick = () => { alClaps[i] = c.t; drawAlign(); };
+      cands.appendChild(b);
+    }
+    const cv = row.querySelector('canvas');
+    cv.onclick = e => {
+      const r = cv.getBoundingClientRect();
+      const t = ((e.clientX - r.left) / r.width) * alView.window;
+      // 画面で 12 ドット以内に候補があればそれに、無ければ前後 0.25秒の一番大きい山に合わせる
+      const near = t0 => Math.abs(t0 - t) <= (12 / r.width) * alView.window;
+      const hit = alView.tracks[i].candidates.filter(c => near(c.t)).sort((a, b) => Math.abs(a.t - t) - Math.abs(b.t - t))[0];
+      alClaps[i] = hit ? hit.t : alPeakNear(i, t, 0.25);
+      drawAlign();
+    };
+    box.appendChild(row);
+  });
+}
+
+// 録音 i の [t − span, t + span] の中で一番大きい山の時刻
+function alPeakNear(i, t, span) {
+  const w = alWaves[i], pps = alView.pps;
+  let best = Math.round(t * pps), bv = -1;
+  for (let k = Math.max(0, Math.round((t - span) * pps)); k <= Math.min(w.length - 1, Math.round((t + span) * pps)); k++) {
+    if (w[k] > bv) { bv = w[k]; best = k; }
+  }
+  return +(best / pps).toFixed(3);
+}
+
+function alCanvas(cv, h) {
+  const w = cv.clientWidth, dpr = window.devicePixelRatio || 1;
+  cv.width = Math.round(w * dpr);
+  cv.height = Math.round(h * dpr);
+  cv.style.height = `${h}px`;
+  const g = cv.getContext('2d');
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.clearRect(0, 0, w, h);
+  return { g, w };
+}
+// 録音 i の [t0, t1) 秒を、横 x0〜x0+w・縦 y0〜y0+h に描く（小さい音も見えるよう、高さは平方根で）
+function alDrawWave(g, i, t0, t1, x0, w, y0, h, color) {
+  const wave = alWaves[i], pps = alView.pps, mid = y0 + h / 2;
+  g.fillStyle = color;
+  for (let x = 0; x < w; x++) {
+    const a = Math.floor((t0 + ((t1 - t0) * x) / w) * pps);
+    const b = Math.max(a + 1, Math.floor((t0 + ((t1 - t0) * (x + 1)) / w) * pps));
+    let p = 0;
+    for (let k = Math.max(0, a); k < Math.min(wave.length, b); k++) if (wave[k] > p) p = wave[k];
+    const hh = Math.sqrt(p / 255) * (h / 2 - 1);
+    if (hh > 0.3) g.fillRect(x0 + x, mid - hh, 1, hh * 2);
+  }
+}
+const AL_COLORS = ['#f0a33c', '#e6d34a', '#4ad0e6', '#9ad89a', '#d79ae6', '#e68a8a', '#8ab4e6', '#e6b98a'];
+
+function drawAlign() {
+  if (!alView) return;
+  const rows = $('#alRows').children;
+  alView.tracks.forEach((t, i) => {
+    const row = rows[i];
+    const at = row.querySelector('.at');
+    const auto = Math.abs(alClaps[i] - t.clapAt) < 1e-6;
+    at.textContent = `手拍子 ${alClaps[i].toFixed(3)}秒${auto && t.guess ? '（拍手か確かめてください）' : ''}`;
+    at.classList.toggle('guess', auto && t.guess);
+    for (const b of row.querySelectorAll('.alCands button')) b.classList.toggle('cur', Math.abs(Number(b.dataset.t) - alClaps[i]) < 1e-6);
+    const cv = row.querySelector('canvas');
+    const { g, w } = alCanvas(cv, AL_ROW_H);
+    alDrawWave(g, i, 0, alView.window, 0, w, 0, AL_ROW_H, AL_COLORS[i % AL_COLORS.length]);
+    const xOf = s => (s / alView.window) * w;
+    for (const c of t.candidates) {
+      g.fillStyle = c.clapLike ? '#ffd27a' : '#8a8f98';
+      const x = xOf(c.t);
+      g.beginPath(); g.moveTo(x - 4, 0); g.lineTo(x + 4, 0); g.lineTo(x, 6); g.fill();
+    }
+    g.fillStyle = '#ff5a4f';
+    g.fillRect(Math.round(xOf(alClaps[i])) - 1, 0, 2, AL_ROW_H);
+  });
+  // 拡大: 全員の手拍子の前後 AL_ZOOM 秒を、手拍子を真ん中にそろえて並べる
+  const n = alView.tracks.length;
+  const { g, w } = alCanvas($('#alZoom'), AL_ZOOM_H * n);
+  alView.tracks.forEach((t, i) => {
+    alDrawWave(g, i, alClaps[i] - AL_ZOOM, alClaps[i] + AL_ZOOM, 0, w, i * AL_ZOOM_H, AL_ZOOM_H, AL_COLORS[i % AL_COLORS.length]);
+    g.fillStyle = '#9aa0a8';
+    g.font = '11px -apple-system, sans-serif';
+    g.fillText(names[i] || t.name, 6, i * AL_ZOOM_H + 13);
+    if (i) { g.fillStyle = '#33363c'; g.fillRect(0, i * AL_ZOOM_H, w, 1); }
+  });
+  g.fillStyle = '#ff5a4f';
+  g.fillRect(Math.round(w / 2), 0, 1, AL_ZOOM_H * n);
+  g.fillStyle = '#9aa0a8';
+  g.fillText(`−${AL_ZOOM}秒`, 4, AL_ZOOM_H * n - 4);
+  g.fillText(`＋${AL_ZOOM}秒`, w - 34, AL_ZOOM_H * n - 4);
+}
+$('#alZoom').onclick = e => {
+  if (!alView) return;
+  const cv = $('#alZoom'), r = cv.getBoundingClientRect();
+  const i = Math.min(alView.tracks.length - 1, Math.floor((e.clientY - r.top) / AL_ZOOM_H));
+  const t = alClaps[i] - AL_ZOOM + ((e.clientX - r.left) / r.width) * 2 * AL_ZOOM;
+  alClaps[i] = alPeakNear(i, t, 0.02);
+  drawAlign();
+};
+addEventListener('resize', () => { if (!$('#alignPanel').hidden) drawAlign(); });
+
+$('#alListen').onclick = () => {
+  if (alAudio && !alAudio.paused) { alAudio.pause(); return; }
+  alAudio = new Audio(`/api/projects/${encodeURIComponent(P.id)}/align/preview?claps=${alClaps.map(v => v.toFixed(3)).join(',')}`);
+  alAudio.onplay = () => { $('#alListen').textContent = '止める'; };
+  alAudio.onpause = alAudio.onended = () => { $('#alListen').textContent = '重ねて聞く'; };
+  alAudio.onerror = () => { $('#alListen').textContent = '重ねて聞く'; toast('重ねた音を作れませんでした'); };
+  alAudio.play().catch(() => {});
+};
+
+function showAlign(j) {
+  const running = j.state === 'running';
+  const pct = Math.round((j.pct || 0) * 100);
+  $('#alProgress').hidden = !running;
+  $('#alBar').style.width = `${pct}%`;
+  $('#alBar').classList.toggle('run', running);
+  $('#alStep').textContent = running ? `${j.step}…\n${pct}%${j.elapsed !== undefined ? `・${etaText(j)}` : ''}` : '';
+  $('#alStart').hidden = running || j.state === 'done';
+  $('#alRows').style.pointerEvents = $('#alZoom').style.pointerEvents = running ? 'none' : '';
+  const res = $('#alResult');
+  res.className = j.state === 'error' ? 'err' : j.state === 'done' ? 'ok' : '';
+  res.textContent = j.state === 'error' ? `できませんでした: ${j.error}` : j.state === 'done' ? 'できました。開き直します…' : '';
+}
+async function pollAlign() {
+  clearTimeout(alPoll);
+  let j;
+  try { j = await (await fetch(`/api/imports/${encodeURIComponent(P.id)}`)).json(); } catch (e) { alPoll = setTimeout(pollAlign, 1000); return; }
+  showAlign(j);
+  if (j.state === 'running') { alPoll = setTimeout(pollAlign, 500); return; }
+  if (j.state === 'done') {
+    try { sessionStorage.setItem('toastAfterLoad', '頭を揃えて、切る所と被りの印を探し直しました'); } catch (e) { /* 知らせが出ないだけ */ }
+    location.reload();
+  } else if ($('#alignPanel').hidden && j.state === 'error') {
+    toast(`頭を揃え直せませんでした: ${j.error}`, 6000);
+  }
+}
+$('#alStart').onclick = async () => {
+  if (alAudio) alAudio.pause();
+  try {
+    const r = await postJson(`/api/projects/${encodeURIComponent(P.id)}/align`, { claps: alClaps });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || '始められませんでした');
+    showAlign(j);
+    pollAlign();
+  } catch (e) { showAlign({ state: 'error', error: e.message }); }
+};
+$('#alClose').onclick = closeAlign;
+$('#alignBtn').onclick = openAlign;
+$('#alignPanel').addEventListener('mousedown', e => { if (e.target === $('#alignPanel')) closeAlign(); });
 
 // ----- 回の整理（ゴミ箱へ） -----
 // 回の名前の一覧の「整理する…」から。全部の回を1行ずつ（名前・作った日・最後に触った日・書き出し済みか・大きさ）並べ、印を付けた回を
@@ -4857,6 +5105,7 @@ addEventListener('keydown', e => {
     if (e.key === 'Escape') {
       if (modal.id === 'importPanel') closeImport();
       else if (modal.id === 'exportPanel') closeExport();
+      else if (modal.id === 'alignPanel') closeAlign();
       else if (modal.id === 'tidyPanel') closeTidy(); // ゴミ箱に入れている間は閉じない
       else modal.hidden = true;
     }

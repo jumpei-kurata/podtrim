@@ -517,6 +517,41 @@ for (const mode of ['sameroom', 'remote', 'decoy', 'remote5']) {
         `${qa.length}か所（既定の 1.4秒以上なら ${cuts.cuts.length}か所）・決まり ${JSON.stringify(ap)}`);
     }
 
+    // 12b) 頭揃えが自動で決まらない時（2026-10-23・倉田さんの考えた流れ）: 止めずに「頭揃え待ち」の回として読み込み（切る所・被り・
+    //      手拍子より前を切る所は無し）、手で選んだ手拍子（画面の「頭を揃える」窓が import.json に書く claps）でもう一度走らせると、
+    //      正しく揃って、切る所と被りの印が入る。決まらない録音は、自動の判定を環境変数で全部効かなくして作る
+    {
+      const pdId = 'align-pending';
+      const pdDir = path.join(dataDir, pdId);
+      fs.rmSync(pdDir, { recursive: true, force: true });
+      fs.mkdirSync(pdDir, { recursive: true });
+      const job = { name: '頭揃え待ちの確認', files, bgm: null, cm: null };
+      fs.writeFileSync(path.join(pdDir, 'import.json'), JSON.stringify(job));
+      const noSync = { ...env, CLAP_QUIET_DB: '-400', MIN_LOCAL: '2', MIN_CORR: '2', MIN_TURN: '2' };
+      const importOnce = () => spawnSync('node', [path.join(ROOT, 'ui', 'import.js'), pdId], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, env: noSync });
+      const pd = importOnce();
+      const pp = pd.status === 0 ? JSON.parse(fs.readFileSync(path.join(pdDir, 'project.json'), 'utf8')) : null;
+      check('頭揃えが決まらなくても止めずに「頭揃え待ち」の回として読み込む（切る所・被りはまだ探さない）',
+        Boolean(pp && JSON.stringify(pp.alignPending) === JSON.stringify(files.slice(1).map((_, i) => i + 1)) && pp.cuts.length === 0 && pp.overlaps.length === 0),
+        pp ? `頭揃え待ち ${JSON.stringify(pp.alignPending)}・切る所 ${pp.cuts.length}・被り ${pp.overlaps.length}` : pd.stderr.slice(-200));
+      if (pp) {
+        // 手で選んだ手拍子: 基準の手拍子（自動の判定を効かなくしたので、高い音が一番大きい所＝合成音源の手拍子）から、正しいずれを引いた時刻
+        const ref0 = JSON.parse(fs.readFileSync(path.join(pdDir, 'work', 'sync.json'), 'utf8')).results[0].clapAt;
+        const claps = files.map(f => +(ref0 - expected[path.basename(f)]).toFixed(4));
+        fs.writeFileSync(path.join(pdDir, 'import.json'), JSON.stringify({ ...job, claps }));
+        const pd2 = importOnce();
+        const p2 = pd2.status === 0 ? JSON.parse(fs.readFileSync(path.join(pdDir, 'project.json'), 'utf8')) : null;
+        const auto = p2 ? p2.cuts.filter(c => c.origin === 'auto').length : 0;
+        // 被りの印は、同じ揃え方で作った 9) の回と同じ数だけ入る
+        const fx = JSON.parse(fs.readFileSync(path.join(dataDir, 'fixture', 'project.json'), 'utf8'));
+        check('手で選んだ手拍子で揃え直すと、頭揃えが正しく、手拍子より前を切る所・切る所・被りの印が入る',
+          Boolean(p2 && !p2.alignPending && p2.tracks.every(t => Math.abs(t.source.offset - expected[path.basename(t.source.file)]) <= 0.001)
+            && p2.cuts.some(c => c.origin === 'head') && auto > 0 && p2.overlaps.length === fx.overlaps.length && fx.overlaps.length > 0),
+          p2 ? `${p2.tracks.map(t => `${path.basename(t.source.file)} ${t.source.offset}`).join(' / ')}・切る所 ${auto}・被り ${p2.overlaps.length}（9) の回 ${fx.overlaps.length}）`
+            : pd2.stderr.slice(-200));
+      }
+    }
+
     // 13) 落とされたファイルの元の場所を探せるか（名前・大きさ・更新日時。名前の濁点の持ち方が違っても）
     {
       const { findOriginals } = require('../ui/files');
@@ -884,6 +919,24 @@ for (const mode of ['sameroom', 'remote', 'decoy', 'remote5']) {
       fs.rmSync(v5, { force: true });
     }
   }
+}
+
+// 音合わせの拍手の判定（src/clap.js の syncClap・2026-10-23・個人開発回）: 最大の音の半分に届かなくても、ほかの拍手らしい音より
+// ずっと大きく、普段の音よりはっきり大きければ拍手とみなす。似た音が続く物（キーボード）・話の間の小さなクリックは拾わない
+console.log('\n[拍手の判定]');
+{
+  const { syncClap } = require('../src/clap');
+  // 拍手らしい音の1位・2位（無ければ 0）・一番大きい音・普段の音（山の上位 1%）の大きさ
+  const c = (s, second, loudest, usual) => ({
+    clapLike: [{ t: 6, peak: s }, ...(second ? [{ t: 40, peak: second }] : [])], top: [{ t: 56, peak: loudest }], usual,
+  });
+  check('最大の音の半分以上の拍手らしい音は、これまでどおり拍手', Boolean(syncClap(c(0.6, 0.5, 1, 0.5))));
+  check('半分に届かなくても、ほかの拍手らしい音の 5倍以上・普段の音の 2倍以上なら拍手（個人開発回の3本目: 0.40倍・19倍・2.68倍）',
+    Boolean(syncClap(c(0.2765, 0.0144, 0.6844, 0.1032))));
+  check('似た音が続く（キーボード）なら、半分に届かない音は拍手にしない', !syncClap(c(0.3, 0.2, 0.7, 0.1)));
+  check('普段の音と変わらない小さな音（拍手を切った録音の、話の間のクリック: 0.26倍・普段の音の 0.95倍）は拍手にしない',
+    !syncClap(c(0.1868, 0, 0.7157, 0.1966)));
+  check('最大の音の 4分の1 に届かない音は拍手にしない', !syncClap(c(0.15, 0, 1, 0.05)));
 }
 
 // 11) 話し声の大きさの測り方: 話す時間の長さに左右されず、声の大きさの差は差として出るか
