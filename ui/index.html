@@ -323,7 +323,12 @@
   /* AI が確かめてほしいと言った所（説明文の列の中・本文の下の黄色い枠。1件ずつ出す。列の高さの半分まで。それより多い時だけ
      枠の中をスクロールする＝本文が潰れないように） */
   .dpNote { flex: none; max-height: 50%; overflow: auto; color: #e3c36a; font-size: 12px; line-height: 1.6; margin-top: 8px; padding: 6px 10px; border: 1px solid rgba(227, 195, 106, .55); border-radius: 8px; background: rgba(227, 195, 106, .08); user-select: text; word-break: auto-phrase; }
-  .dpNoteH { font-weight: 600; cursor: pointer; user-select: none; } /* 押すと閉じる・開く（左の ▸ ▾） */
+  /* 押すと閉じる・開く（左の ▸ ▾）。右端に「閉じる」「開く」を小さく出す（▾ だけでは押せると分かりにくかった・2026-10-23・
+     倉田さん「なんか閉じれるかどうか分かりづらくない？」→ 右端に文字を出す案を選んだ） */
+  .dpNoteH { font-weight: 600; cursor: pointer; user-select: none; }
+  .dpNoteH::after { content: '開く'; float: right; margin-left: 12px; font-weight: 400; font-size: 11px; color: #b9a35c; }
+  .dpNote[open] > .dpNoteH::after { content: '閉じる'; }
+  .dpNoteH:hover::after { color: #f0d47e; text-decoration: underline; }
   .dpNote[open] > .dpNoteH { margin-bottom: 2px; }
   .dpNote ul { margin: 0; padding-left: 18px; }
   .dpMsg { color: #b9c0c8; line-height: 1.7; }
