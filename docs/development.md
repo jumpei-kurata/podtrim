@@ -99,6 +99,9 @@ LABELS_OUT=work/overlap-labels.txt node src/overlap.js work/aligned/*.wav
 node src/report.js work/cuts.json work/review
 ```
 
+`report.js` は長いフィルタをファイルで ffmpeg に渡す。ffmpeg 9 で前の指定（`-filter_complex_script`）が無くなり、検品用の出力だけ止まっていたので、
+ffmpeg 7 からの `-/filter_complex <ファイル>` に替えた（2026-10-22。6 以前の ffmpeg では前の指定でやり直す）
+
 ## 編集画面（GarageBand 風・作成中）
 
 GarageBand に移さず、この画面だけで編集を終わらせるためのもの（意図: `docs/intent/2026-10-17-standalone-editor-app.md`）。

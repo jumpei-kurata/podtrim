@@ -56,12 +56,16 @@ if (cuts.length) {
   const fPath = path.join(outDir, '_removed_filter.txt');
   fs.writeFileSync(fPath, filter);
   removedFile = path.join(outDir, 'removed-audio.wav');
-  const res = spawnSync(
+  // フィルタは切る所の数だけ長くなるので、引数に書かずファイルで渡す。ffmpeg 7 からは「-/filter_complex <ファイル>」で、
+  // 前の -filter_complex_script は ffmpeg 9 で無くなった（2026-10-22）。6 以前は -/ を知らないので、その時だけ前の指定でやり直す
+  const mix = opt => spawnSync(
     'ffmpeg',
     ['-y', '-hide_banner', '-loglevel', 'error', ...files.flatMap(f => ['-i', f]),
-     '-filter_complex_script', fPath, '-map', '[out]', removedFile],
+     opt, fPath, '-map', '[out]', removedFile],
     { encoding: 'utf8' }
   );
+  let res = mix('-/filter_complex');
+  if (res.status !== 0 && /Unrecognized option/.test(res.stderr)) res = mix('-filter_complex_script');
   if (res.status !== 0) throw new Error(`ffmpeg failed\n${res.stderr}`);
 }
 
