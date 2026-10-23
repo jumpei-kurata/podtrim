@@ -169,7 +169,7 @@ async function callAI(provider, model, key, prompt) {
         : res.status === 429 ? '使える回数の上限に届きました。少し待ってから（無料枠なら次の日に）もう一度作ってください'
         : res.status >= 500 ? '混んでいるようです。少し待ってからもう一度作ってください'
         : '断られました';
-      throw new Error(`${name}: ${what}（${res.status}: ${msg}）`);
+      throw Object.assign(new Error(`${name}: ${what}（${res.status}: ${msg}）`), { status: res.status });
     }
     try { return JSON.parse(text); } catch { throw new Error(`${name}の返事が読めませんでした。もう一度作ってください`); }
   };
@@ -198,6 +198,35 @@ async function callAI(provider, model, key, prompt) {
   } finally {
     clearTimeout(timer);
   }
+}
+
+// 混んでいる（5xx）時は、間を空けてやり直す。それでもだめなら、同じ会社の軽いモデル（settings.js の light・Gemini は 3.5 Flash-Lite）で
+// 試す（倉田さんが押し直さなくて済むように・2026-10-23。その日 Gemini が 503「high demand」を返して止まった）。回数の上限（429）・鍵の
+// 誤り・つながらない・返事が来ない時はやり直さない。軽いモデルも混んでいる（または無い）時だけ、初めの「混んでいる」の知らせを出す。
+// 待つ秒数は、試す時に HIMADAN_AI_WAIT（カンマ区切り）で変えられる。返すのは返事と、実際に書いたモデル
+const BUSY_WAITS = (process.env.HIMADAN_AI_WAIT || '5,15').split(',').map(Number);
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+async function callAIBusy(provider, model, key, prompt, note) {
+  const tries = BUSY_WAITS.length + 1;
+  let busy;
+  for (let i = 1; i <= tries; i++) {
+    try { return { text: await callAI(provider, model, key, prompt), model }; } catch (e) {
+      if (!(e.status >= 500)) throw e;
+      busy = e;
+      if (i < tries) {
+        note(`混んでいるので、やり直しています（${i + 1}/${tries}）`);
+        await sleep(BUSY_WAITS[i - 1] * 1000);
+      }
+    }
+  }
+  const light = AI[provider].light;
+  if (light && light !== model) {
+    note(`混んでいるので、軽いモデル（${light}）で試しています`);
+    try { return { text: await callAI(provider, light, key, prompt), model: light }; } catch (e) {
+      if (!(e.status >= 500) && e.status !== 404) throw e;
+    }
+  }
+  throw busy;
 }
 
 // AI の返事から JSON を取り出す（前後に文が付いても、最初の { から最後の } まで）。目次は「分:秒」の形（秒は 59 まで）で、
@@ -283,10 +312,11 @@ async function describe(id, opts = {}) {
       result = { ...common, ai: false, reason: `${AI[provider].label.split('（')[0]}の鍵が入っていません（「AI の設定」で入れてください）` };
     } else {
       progress('ai', 0);
-      const reply = await callAI(provider, model, key, prompt);
-      const d = parseReply(reply, cmStart !== null ? cmStart : clean.length ? clean[clean.length - 1].end : Infinity);
+      const reply = await callAIBusy(provider, model, key, prompt, note => progress('ai', 0, note));
+      const d = parseReply(reply.text, cmStart !== null ? cmStart : clean.length ? clean[clean.length - 1].end : Infinity);
       if (!d.body || !d.titles.length) throw new Error('AI の返事に、タイトルか本文がありませんでした。もう一度作ってください');
-      result = { ...common, ai: true, ...d, description: assemble(d, footer) };
+      // 軽いモデルで書いた時は、そのモデルの名前を残す（画面の見出しに出て、今の設定と違えば「作り直す」を案内する）
+      result = { ...common, model: reply.model, ai: true, ...d, description: assemble(d, footer) };
       progress('ai', 1);
     }
   }
@@ -309,10 +339,11 @@ if (require.main === module) {
   // 進み具合: 文字にする 0〜80%・番号 80〜82%・AI が書く 82〜100%
   const SPAN = { transcribe: [0, 0.8, '文字にしています（40分の回で2分ほど）'], number: [0.8, 0.82, '次の番号を調べています'], ai: [0.82, 1, 'AI が書いています'] };
   let last = -1;
-  const progress = (step, f) => {
+  // note は、その段の今の様子（「混んでいるので、やり直しています（2/3）」など）。あれば段の名前の代わりに出す
+  const progress = (step, f, note) => {
     const [a, b, label] = SPAN[step];
     const pct = a + (b - a) * Math.max(0, Math.min(1, f));
-    if (json && (pct - last >= 0.005 || f >= 1 || f === 0)) { last = pct; console.log(JSON.stringify({ type: 'progress', step: label, pct: +pct.toFixed(3) })); }
+    if (json && (pct - last >= 0.005 || f >= 1 || f === 0)) { last = pct; console.log(JSON.stringify({ type: 'progress', step: note || label, pct: +pct.toFixed(3) })); }
   };
   const t0 = Date.now();
   describe(id, { audio: opt('--audio'), again: args.includes('--again'), progress })

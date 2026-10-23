@@ -760,6 +760,35 @@ for (const mode of ['sameroom', 'remote', 'decoy', 'remote5']) {
         check('鍵が違う時・AI につながらない時は、何をすればよいかを日本語で出して止まる',
           bk.status !== 0 && bk.stderr.includes('鍵が違うか、使えなくなっています') && nc.status !== 0 && nc.stderr.includes('につながりませんでした'),
           `${bk.stderr.trim().slice(0, 50)} / ${nc.stderr.trim().slice(0, 50)}`);
+        // 混んでいる時（5xx）は、間を空けてやり直し、だめなら軽いモデルで試す。回数の上限（429）はやり直さない（2026-10-23・その日
+        // Gemini が 503「high demand」を返して止まった）。偽の AI の鍵で場面を作り、待つ秒数は 0 にする
+        const busyRun = key => {
+          fs.writeFileSync(settings, JSON.stringify({ ai: { provider: 'gemini' } }));
+          fs.rmSync(path.join(fixDir, 'description.json'), { force: true });
+          const r = spawnSync('node', [path.join(ROOT, 'ui', 'describe.js'), 'fixture', '--progress'],
+            { encoding: 'utf8', env: { ...denv, HIMADAN_AI_KEY: key, HIMADAN_AI_WAIT: '0,0' } });
+          const steps = r.stdout.split('\n').map(l => { try { return JSON.parse(l); } catch { return null; } })
+            .filter(x => x && x.type === 'progress').map(x => x.step);
+          let calls = [], d = null;
+          try { calls = JSON.parse(spawnSync('curl', ['-s', `http://127.0.0.1:${aiPort}/calls/${key}`], { encoding: 'utf8' }).stdout); } catch { /* 数えられない */ }
+          try { d = JSON.parse(fs.readFileSync(path.join(fixDir, 'description.json'), 'utf8')); } catch { /* 作れなかった */ }
+          return { status: r.status, stdout: r.stdout, steps, calls, d };
+        };
+        const b2 = busyRun('busy-2');
+        check('説明文: 混んでいる（503）時は、やり直していることを出しながら3回まで頼み、3回目で書ける',
+          b2.status === 0 && b2.d && b2.d.model === 'gemini-3.8-flash' && b2.calls.length === 3 &&
+            b2.steps.includes('混んでいるので、やり直しています（2/3）') && b2.steps.includes('混んでいるので、やり直しています（3/3）'),
+          `${b2.calls.length}回・${b2.d ? b2.d.model : '作れない'}`);
+        const bl = busyRun('busy-lite');
+        check('説明文: 3回とも混んでいたら、軽いモデル（gemini-3.5-flash-lite）で書き、そのモデルの名前を残す',
+          bl.status === 0 && bl.d && bl.d.model === 'gemini-3.5-flash-lite' && bl.steps.some(s => s.includes('軽いモデル')) &&
+            JSON.stringify(bl.calls) === JSON.stringify(['gemini-3.8-flash', 'gemini-3.8-flash', 'gemini-3.8-flash', 'gemini-3.5-flash-lite']),
+          bl.calls.join(' → '));
+        const ba = busyRun('busy-all');
+        check('説明文: 軽いモデルも混んでいたら、初めの「混んでいる」の知らせを出して止まる',
+          ba.status !== 0 && /混んでいるようです/.test(ba.stdout) && ba.calls.length === 4, `${ba.calls.length}回`);
+        const lm = busyRun('limit');
+        check('説明文: 回数の上限（429）はやり直さない', lm.status !== 0 && /使える回数の上限/.test(lm.stdout) && lm.calls.length === 1, `${lm.calls.length}回`);
         // e) 書き出していない回・決まった書き出し先の外へ書き出しただけの回は、先に書き出すよう案内して止まる
         const nx = spawnSync('node', [path.join(ROOT, 'ui', 'describe.js'), imId], { encoding: 'utf8', env: denv });
         const outside = spawnSync('node', [path.join(ROOT, 'ui', 'describe.js'), 'fixture'], { encoding: 'utf8', env: { ...denv, HIMADAN_EXPORT: path.join(dataDir, 'よそ') } });

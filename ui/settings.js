@@ -26,9 +26,11 @@ function writeSettings(s) {
 // モデルは画面の設定で変えられる。Gemini は無料枠で使えるいちばん新しい Flash（gemini-3.8-flash・2026-09-02 一般公開）。
 // 前は「最新の Flash」を指す名前 gemini-flash-latest だったが、5月の Gemini 3.5 Flash のまま動いておらず、10/8 に 3.5 が引退して
 // 3.6 Flash に回されていた（倉田さん「ジェミニからめっちゃ古い情報飛んできた気がする…ジェミニ4がつい最近出てきたと思うんだけど」・
-// 2026-10-19・https://ai.google.dev/gemini-api/docs/changelog）。Gemini 4（gemini-4-argon・10/13 一般公開）は無料枠に無い（課金が要る）
+// 2026-10-19・https://ai.google.dev/gemini-api/docs/changelog）。Gemini 4（gemini-4-argon・10/13 一般公開）は無料枠に無い（課金が要る）。
+// light は、混んでいて（5xx）やり直してもだめな時に試す軽いモデル（ui/describe.js）。Gemini は無料枠の Flash-Lite でいちばん新しい
+// gemini-3.5-flash-lite（2026-10-23・https://ai.google.dev/gemini-api/docs/models と pricing で確かめた）
 const AI = {
-  gemini: { label: 'Gemini（Google・無料枠あり）', model: 'gemini-3.8-flash', keyUrl: 'https://aistudio.google.com/apikey' },
+  gemini: { label: 'Gemini（Google・無料枠あり）', model: 'gemini-3.8-flash', light: 'gemini-3.5-flash-lite', keyUrl: 'https://aistudio.google.com/apikey' },
   claude: { label: 'Claude（Anthropic・有料）', model: 'claude-sonnet-5-5', keyUrl: 'https://console.anthropic.com/settings/keys' },
   openai: { label: 'OpenAI（有料）', model: 'gpt-5-mini', keyUrl: 'https://platform.openai.com/api-keys' },
 };

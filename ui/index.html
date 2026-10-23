@@ -320,7 +320,11 @@
   .dpToc div { line-height: 1.8; }
   .dpToc a { color: #7cb7ff; cursor: pointer; margin-right: 6px; font-variant-numeric: tabular-nums; }
   .dpToc a:hover { text-decoration: underline; }
-  .dpNote { flex: none; max-height: 4.8em; overflow: auto; color: #e3c36a; font-size: 12px; line-height: 1.6; margin-bottom: 6px; }
+  /* AI が確かめてほしいと言った所（説明文の箱の外・3つの列の上の黄色い枠。1件ずつ出す。見出しと5行ほどまで。それより多い時だけ
+     枠の中をスクロールする＝下の3つの列が潰れないように） */
+  .dpNote { flex: none; max-height: 9.6em; overflow: auto; color: #e3c36a; font-size: 12px; line-height: 1.6; margin-bottom: 8px; padding: 6px 10px; border: 1px solid rgba(227, 195, 106, .55); border-radius: 8px; background: rgba(227, 195, 106, .08); user-select: text; word-break: auto-phrase; }
+  .dpNoteH { font-weight: 600; margin-bottom: 2px; }
+  .dpNote ul { margin: 0; padding-left: 18px; }
   .dpMsg { color: #b9c0c8; line-height: 1.7; }
   .dpErr { flex: none; color: #ff9b8a; font-size: 12px; line-height: 1.5; margin-bottom: 6px; }
   /* 「作り直す」への案内（前の書き出しから作った下書き・今の設定と違うモデルで書いた下書き）と、書き出しが終わった時の結果。
@@ -3492,10 +3496,14 @@ function renderDesc() {
     : otherAi ? `この下書きは ${by}書きました。今の設定は ${name(aiConf.provider, aiConf.model)} です（上の「作り直す」で書き直せます）` : '';
   const redo = redoText ? `<div class="dpRedo">${esc(redoText)}</div>` : '';
   if (r.ai) {
-    body.innerHTML = `${err}${done}${redo}<div class="dpCols">
+    // AI が確かめてほしいと言った所は、説明文の箱の外（3つの列の上）に別の黄色い枠で、1件ずつ全部出す。箱の中はコピーされる本文だけ
+    // （倉田さん「確かめてほしい所もコピーされるように思っちゃう」・2026-10-23。前は説明文の箱の中に「・」でつないだ1段落で、3件目の
+    // 途中で切れて見えていた。コピーは前から本文だけ）
+    const notes = r.notes && r.notes.length
+      ? `<div class="dpNote"><div class="dpNoteH">確かめてほしい所（コピーには入りません）</div><ul>${r.notes.map(n => `<li>${esc(n)}</li>`).join('')}</ul></div>` : '';
+    body.innerHTML = `${err}${done}${redo}${notes}<div class="dpCols">
       <div class="dpCol"><div class="dpH">タイトル案（1つ目がおすすめ）</div><div class="dpScroll">${r.titles.map((t, i) => `<div class="dpRow"><span>${esc(t)}</span><button data-copy="title:${i}">コピー</button></div>`).join('')}</div></div>
-      <div class="dpCol"><div class="dpH"><span>説明文（目次と定型の下まで全部）</span><button data-copy="desc">コピー</button></div>${
-        r.notes && r.notes.length ? `<div class="dpNote">確かめてほしい所（コピーする前に）: ${r.notes.map(esc).join('・')}</div>` : ''}<div class="dpScroll dpText">${esc(r.description)}</div></div>
+      <div class="dpCol"><div class="dpH"><span>説明文（目次と定型の下まで全部）</span><button data-copy="desc">コピー</button></div><div class="dpScroll dpText">${esc(r.description)}</div></div>
       <div class="dpCol"><div class="dpH">目次（押すとその所を聞ける）</div><div class="dpScroll dpToc">${toc(r.toc)}</div></div></div>`;
   } else {
     const lines = String(r.transcriptText || '').split('\n').map(l => { const m = /^\[(\d+:\d{2})\] (.*)$/.exec(l); return m ? { t: m[1], label: ` ${m[2]}` } : null; }).filter(Boolean);
@@ -4779,8 +4787,14 @@ function dragTo(e) {
   if (drag.kind !== 'voice') return;
   const a = clamp(x2a(x), 0, talkLen());
   const r0 = rawOf(Math.min(drag.a0, a)), r1 = rawOf(Math.max(drag.a0, a));
-  const item = { track: drag.k, start: r0, end: r1 };
-  selection = drag.shift ? [...drag.base.filter(s => s.track !== drag.k), item] : [item];
+  // 上下に動かすと、またいだ声のトラックすべてに同じ時間の範囲を選ぶ（GarageBand と同じ。倉田さん「トラック上でドラッグして…この一つの
+  // トラック内でしかドラッグできない。横断的にどのトラックでも選択できるようにしてほしい」・2026-10-23。前は始めたトラックの中だけ）。
+  // BGM・CM の行は時間の測り方が違うので入れない（BGM・CM の所は、その行の上をドラッグするか、四角で囲む）
+  const my = wrapXY(e)[1], c0 = rows[drag.row].canvas;
+  const ya = Math.min(my, c0.offsetTop), yb = Math.max(my, c0.offsetTop + c0.offsetHeight);
+  const ks = rows.filter(r => r.kind === 'voice' && r.canvas.offsetTop < yb && r.canvas.offsetTop + r.canvas.offsetHeight > ya).map(r => r.k);
+  const items = ks.map(k => ({ track: k, start: r0, end: r1 }));
+  selection = drag.shift ? [...drag.base.filter(s => !ks.includes(s.track)), ...items] : items;
   showSel();
 }
 addEventListener('mousemove', e => { if (marquee) moveMarquee(e); else if (drag) dragTo(e); });
